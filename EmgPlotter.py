@@ -5,12 +5,10 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
 index = count()
-
-
 def animate(i):
     emg_data = pd.read_csv('emg_data.csv')
-    x = emg_data['time']
-    y = emg_data['volts']
+    x = emg_data[1]  # time
+    y = emg_data[2]  # emg reading in vlots
     print(x, y)
     plt.cla()  # clear the plots and update the them
     plt.plot(x, y)

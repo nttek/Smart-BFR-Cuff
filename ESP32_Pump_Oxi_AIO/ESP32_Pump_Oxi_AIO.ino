@@ -453,7 +453,7 @@ void resetTime() {
   timeElapsed = 0;
 }
 
-int plethHolder[6] = {0};
+int plethHolder[36] = {0};
 int holderPosition = 0;
 
 boolean lopCheckAt(int pressure) {
@@ -463,9 +463,9 @@ boolean lopCheckAt(int pressure) {
   setThreshold(pressure, 1);
   resetTime();
   while (currentPressure < pressure) {
-    if (timeElapsed >= 10) {
-      Serial.println("Inflation timeout!");
+    if (timeElapsed >= 20) {
       errorMessage = "Inflation timeout!";
+      //Serial.println(errorMessage);
       return false;
     }
     updatePres();
@@ -480,8 +480,8 @@ boolean lopCheckAt(int pressure) {
     holderPosition++;
     timeElapsed = millis() / 1000 - startTime;
     if (!connected) {
-      Serial.println("Disconnected!");
       errorMessage = "Disconnected!";
+      //Serial.println(errorMessage);
       return false;
     }
 
@@ -496,11 +496,11 @@ boolean lopCheckAt(int pressure) {
   }
 
   //do something with the plethHolder
-  for (int i = 0; i <= holderPosition; i++) {
-    Serial.print(plethHolder[i]);
-    Serial.print(" ");
-  }
-  Serial.println();
+  //  for (int i = 0; i <= holderPosition; i++) {
+  //    Serial.print(plethHolder[i]);
+  //    Serial.print(" ");
+  //  }
+  //  Serial.println();
   Serial.println("Exit from: " + String(pressure));
   return true;
 }
@@ -509,18 +509,133 @@ void lopSequence() {
 
   SerialBT.println("Starting LOP sequence...");
   Serial.println("#W22,200\n"); //Turn the pump low to 200 when the upper threshold is reached
-  if (lopCheckAt(60)) {
+  holderPosition = 0;
+  if (lopCheckAt(60) && !lopAckFlag) {
+    //normal readings, take mean
+    int sum = 0;
+    float normalAvg = 0;
+    for (int i = 0; i < 6; i++) {
+      sum = sum + plethHolder[i];
+    }
+    normalAvg = sum / 6;
+
+    //*******************************
     if (lopCheckAt(90)) {
-      if (lopCheckAt(110)) {
-        if (lopCheckAt(130)) {
-          if (lopCheckAt(120)) {
-            Serial.println("Success!");
+      //start point, observe changes
+      sum = 0;
+      float avg = 0;
+      float tempAvg = 0;
+      float delta = 0;
+      boolean next = false;
+      for (int i = 6; i < 12; i++) {
+        sum = sum + plethHolder[i];
+      }
+      avg = sum / 6;
+      delta = normalAvg - avg;
+      Serial.println("90: " + String(delta));
+
+      if (delta >= 5) {
+        next = true;
+        tempAvg = avg;
+      }
+
+      //*******************************
+      if (!lopAckFlag && lopCheckAt(110)) {
+        //check lop, if lop reached
+        sum = 0;
+        for (int i = 12; i < 18; i++) {
+          sum = sum + plethHolder[i];
+        }
+        avg = sum / 6;
+        delta = normalAvg - avg;
+        Serial.println("110: " + String(delta));
+
+        if (next) {
+          if (delta > 15) {
+            LOP = 100;
             lopAckFlag = true;
-            Serial.println("Exit calibrate");
+          }
+
+          else {
+            next = true;
+            tempAvg = avg;
+          }
+        }
+
+        else if (delta >= 5) {
+          next = true;
+          tempAvg = avg;
+        }
+
+        //*******************************
+        if (!lopAckFlag && lopCheckAt(130)) {
+          //check lop, if lop/post lop reached
+          sum = 0;
+          for (int i = 18; i < 24; i++) {
+            sum = sum + plethHolder[i];
+          }
+          avg = sum / 6;
+          delta = normalAvg - avg;
+          Serial.println("130: " + String(delta));
+
+          if (next) {
+            if (delta > 15) {
+              LOP = 120;
+              lopAckFlag = true;
+            }
+
+            else {
+              next = true;
+              tempAvg = avg;
+            }
+          }
+
+          else if (delta >= 5) {
+            next = true;
+            tempAvg = avg;
+          }
+
+          if (!lopAckFlag && lopCheckAt(140)) {
+            //record lop, if lop/post lop reached
+            sum = 0;
+            for (int i = 24; i < 30; i++) {
+              sum = sum + plethHolder[i];
+            }
+            avg = sum / 6;
+            delta = normalAvg - avg;
+
+            Serial.println("140: " + String(delta));
+
+            if (next) {
+              if (delta > 15) {
+                LOP = 130;
+                lopAckFlag = true;
+              }
+            }
+
+            else {
+              LOP = 140;
+              lopAckFlag = true;
+            }
           }
         }
       }
     }
   }
 
+  for (int i = 0; i <= holderPosition; i++) {
+    Serial.print(plethHolder[i]);
+    Serial.print(" ");
+  }
+  Serial.println();
+  Serial.println(lopAckFlag);
+  if (lopAckFlag) {
+    Serial.println("Calibration success!");
+    Serial.println("Calibrated LOP: " + String(LOP));
+  }
+  else {
+    Serial.println("Calibration error:" + errorMessage);
+    Serial.println("Default LOP: " + String(LOP));
+  }
+  Serial.println("Exit calibrate");
 }

@@ -2,12 +2,18 @@
 //#include "BLEScan.h"
 
 #include "BluetoothSerial.h" //Header File for Serial Bluetooth, will be added by default into Arduino
+//
+//#include <TimeLib.h>
+//time_t startTime = 0;
+//time_t timeElapsed = 0;
 
 BluetoothSerial SerialBT; //Object for Bluetooth
 
 int incoming;
 int LED_BUILTIN = 2;
 String str;
+static unsigned int LOP = 105;
+int currentPressure = 0;
 
 // The remote service we wish to connect to.
 static BLEUUID serviceUUID("cdeacb80-5235-4c07-8846-93a37ee6b86d");
@@ -27,21 +33,103 @@ float pi;
 
 float u1, u2, u3, u4, u5, u6, u7;
 
+int plethArray[15];
+int mergedPlethArray[50];
+int plethArrayLength = sizeof(plethArray) / sizeof(int);
+boolean plethValid = true;
+int plethSum = 0;
+float plethAvg = 0;
+int z = 1;
+
+boolean lopAckFlag = false;
 
 static void notifyCallback(BLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
-  if (pData[0] == 0x81) {
-    bpm = pData[1];
-    spo2 = pData[2];
-    pi = pData[3];
 
-    u1 = pData[4];
-    u2 = pData[5];
-    u3 = pData[6];
-    u4 = pData[7];
-    u5 = pData[8];
-    u6 = pData[9];
-    u7 = pData[10];
+  //  Serial.print("data: ");
+  //  for (int i = 0; i < length; i++) {
+  //    Serial.print(pData[i]);
+  //    Serial.print(" ");
+  //  }
+  //
+  //  Serial.println("");
+  //
+  if (pData[0] == 0x80) {
+    //reset array contents
+    for (int l = 0; l < plethArrayLength; l++) {
+      plethArray[0];
+    }
+
+    //store incoming pleth data into array
+    for (int i = 1; i < length; i++) {
+      //Serial.print(pData[i]);
+      //Serial.println("");;
+
+      if (length < plethArrayLength) {
+        plethArray[i - 1] = pData[i];
+        plethValid = true;
+      }
+      else {
+        plethValid = false;
+        //Serial.println("Outbound");
+      }
+    }
+
+    //h
+    //    for (int l = 0; l < plethArrayLength; l++) {
+    //      Serial.print(plethArray[l]);
+    //      Serial.print(" ");
+    //    }
+    //
+    //    Serial.println();
+
+
+    int maxValue = plethArray[0];  // initialize the maximum as the first element
+
+    for (int idx = 0; idx < plethArrayLength; ++idx)
+    {
+      if ( plethArray[ idx ] > maxValue)
+      {
+        maxValue = plethArray[idx];
+      }
+    }
+
+    //Serial.println("MAX: " + String(maxValue));
+
+    if (plethValid && z != 12) {
+      plethSum += maxValue;
+      z++;
+    }
+
+    else if (plethValid && z == 12) {
+      plethSum += maxValue;
+      plethAvg = plethSum / 12;
+      z = 0;
+      plethSum = 0;
+      //Serial.println("AVG: " + String(plethAvg));
+    }
+    maxValue = 0;
+
   }
+
+
+
+
+  //}
+
+  //
+  //  if (pData[0] == 0x81) {
+  //    bpm = pData[1];
+  //    spo2 = pData[2];
+  //    pi = pData[3];
+  //
+  //    u1 = pData[4];
+  //    u2 = pData[5];
+  //    u3 = pData[6];
+  //    u4 = pData[7];
+  //    u5 = pData[8];
+  //    u6 = pData[9];
+  //    u7 = pData[10];
+  //  }
 }
 
 class MyClientCallback : public BLEClientCallbacks {
@@ -148,7 +236,6 @@ void setup() {
     Serial.println("Bluetooth initialized");
   }
 
-  //Serial.println("#W0,0\n"); //Disable the pump (!can't do that otherwise pump won't turn on forever)
   Serial.println("#W18,0\n"); //Use Set Val (register 23) as the input to the bang bang controller
   Serial.println("#W19,10\n"); //Set the lower threshold to 10
   Serial.println("#W20,100\n"); //Set the upper threshold to 100
@@ -156,7 +243,7 @@ void setup() {
   Serial.println("#W22,0\n"); //Turn the pump off when the upper threshold is reached
   delay(20);
   Serial.println("#W23,1000\n"); //Start by initially turned off pump by setting “Set Value” well above the threshold value
-  SerialBT.println("Initial state: PUMP is OFF");
+  Serial.println("Initial state: PUMP is OFF");
 
   pinMode (LED_BUILTIN, OUTPUT);//Specify that LED pin is output
 
@@ -166,41 +253,30 @@ void setup() {
 // This is the Arduino main loop function.
 void loop() {
 
-  // If the flag "doConnect" is true then we have scanned for and found the desired
-  // BLE Server with which we wish to connect.  Now we connect to it.  Once we are
-  // connected we set the connected flag to be true.
+  //  // If the flag "doConnect" is true then we have scanned for and found the desired
+  //  // BLE Server with which we wish to connect.  Now we connect to it.  Once we are
+  //  // connected we set the connected flag to be true.
   if (doConnect == true) {
     if (connectToServer()) {
-      Serial.println("We are now connected to the BLE Server.");
+      SerialBT.println("We are now connected to the BLE Server.");
     } else {
-      Serial.println("We have failed to connect to the server; there is nothin more we will do.");
+      SerialBT.println("We have failed to connect to the server; there is nothin more we will do.");
     }
     doConnect = false;
   }
 
-  // If we are connected to a peer BLE Server, update the characteristic each time we are reached
-  // with the current time since boot.
-  if (connected) {
-    String newValue = "Time since boot: " + String(millis() / 1000);
-    SerialBT.println(newValue);
-    SerialBT.print("SPO2: " + String(spo2));
-    SerialBT.print("     BPM: " + String(bpm));
-    SerialBT.println("    PI: " + String(pi / 10.0));
-
-
-    SerialBT.print("u1: " + String(u1));
-    SerialBT.print("     u2: " + String(u2));
-    SerialBT.println("    u3: " + String(u3));
-    SerialBT.print("u4: " + String(u4));
-    SerialBT.print("     u5: " + String(u5));
-    SerialBT.println("    u6: " + String(u6));
-    SerialBT.println("    u7: " + String(u7));
-
-    // Set the characteristic's value to be the array of bytes that is actually a string.
-    pRemoteCharacteristic->writeValue(newValue.c_str(), newValue.length());
-  } else if (doScan) {
-    //BLEDevice::getScan()->start(0);  // this is just eample to start scan after disconnect, most likely there is better way to do it in arduino
-  }
+  //  // If we are connected to a peer BLE Server, update the characteristic each time we are reached
+  //  // with the current time since boot.
+  //  if (connected) {
+  //    String newValue = "Time since boot: " + String(millis() / 1000);
+  //    SerialBT.println(newValue);
+  //    //    SerialBT.print("SPO2: " + String(spo2));
+  //    //    SerialBT.print("     BPM: " + String(bpm));
+  //    //    SerialBT.println("    PI: " + String(pi / 10.0));
+  //
+  //    // Set the characteristic's value to be the array of bytes that is actually a string.
+  //    pRemoteCharacteristic->writeValue(newValue.c_str(), newValue.length());
+  //  }
 
   SerialBT.register_callback(callback);
 
@@ -210,63 +286,241 @@ void loop() {
     str += c;
   }
 
-  str.trim();
-  //Serial.println(str);
-
   if (str.length() > 0) {
-    if (str == "scan") {
-      Serial.println("Scan started ... ");
+
+    str.trim();
+    str.toLowerCase();
+    Serial.println(str);
+
+    if (str.substring(0, 3) == "set") {
+      //expecting pressure data in the form of set=90
+      int x = str.substring(4).toInt();
+      setPres(x);
+    }
+
+    else if (str.substring(0, 9) == "calibrate") {
+      //expecting instruction to calibrate LOP
+      lopAckFlag = false;
+      lopSequence();
+    }
+
+
+    else if (str.substring(0, 7) == "ackflag") {
+      //request for lop status
+      if (lopAckFlag) {
+        //check lop validty
+        //SerialBT.println("LOP success" + String(LOP));
+        SerialBT.println("success");
+      }
+
+      else {
+        //SerialBT.println("LOP fail");
+        SerialBT.println("fail");
+      }
+    }
+
+    else if (str.substring(0, 6) == "getlop") {
+      //asking data in the form of LOP=180
+      SerialBT.println("LOP: " + String(LOP));
+    }
+
+    else if (str.substring(0, 7) == "percent") {
+      //expecting data in the form of percent=0.6
+      float x = str.substring(8).toFloat();
+
+      //LOP percent validity should be done in the app
+      //if (x >= 0.2 && x <= 0.8) {
+      setThreshold(LOP, x);
+      //}
+
+      //else {
+      //SerialBT.println("Invalid percent");
+      //}
+    }
+
+    else if (str == "scan") {
+      SerialBT.println("Enabling scanning...");
 
       if (!connected) {
-        if (doScan) {
-          BLEDevice::getScan()->start(5);  // this is just an example to start scan after disconnect, most likely there is better way to do it in arduino
-        }
-        else { // enable connects if no device was found on first boot
-          //if (millis() > connectionTimeMs + 6000) {
-            Serial.println("Enabling scanning.");
-            doScan = true;
-          //}
-        }
+        SerialBT.println("Scan started");
+        doScan = true;
+        BLEDevice::getScan()->start(5);
+      }
+
+      else {
+        SerialBT.println("Device already connected.");
       }
     }
 
     else if (str == "reset") {
       SerialBT.println("Resetting device in");
-      delay(500);
-      SerialBT.println("3");
-      delay(1000);
-      SerialBT.println("2");
-      delay(1000);
-      SerialBT.println("1");
-      delay(1000);      
+      //      delay(500);
+      //      SerialBT.println("3");
+      //      delay(1000);
+      //      SerialBT.println("2");
+      //      delay(1000);
+      //      SerialBT.println("1");
+      //      delay(1000);
       esp_restart();
     }
-    
+
     else if (str == "on") {
-      Serial.println("#W23,9");
+      Serial.println("#W23,1");
     }
 
     else if (str == "off") {
-      Serial.println("#W23,101");
+      Serial.println("#W23,1000");
     }
 
-    Serial.println("\n");
+    Serial.println("");
     str = "";
   }
 
-
-  delay(100); // Delay a second between loops.
+  //delay(2000); // Delay a ms between loops.
 } // End of loop
 
-
+//Pump should be turned off before bluetooth device is connected
 void callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
   if (event == ESP_SPP_SRV_OPEN_EVT) {
-    Serial.println("Client Connected");
+    Serial.println("Client Connected: PUMP enabled");
+    Serial.println("#W0,1\n"); //Enables the pump
   }
 
   if (event == ESP_SPP_CLOSE_EVT ) {
-    Serial.println("Client disconnected: PUMP is OFF");
-    //Serial.println("#W0,0\n"); //Disables the pump
-    Serial.println("#W23,1000\n"); //Turn off the pump by setting “Set Value” well above the threshold value
+    Serial.println("Client disconnected: PUMP disabled");
+    Serial.println("#W0,0\n"); //Disables the pump
   }
+}
+
+//Update pressure reading
+void setPres(int x) {
+  currentPressure = x;
+  Serial.println("#W23," + String(currentPressure) + "\n");
+  SerialBT.println("Pressure set to: " + String(x));
+}
+
+//Set the LOP upon valid input
+void setLOP(int x) {
+  if (x >= 120 && x <= 200) {
+    LOP = x;
+    SerialBT.println("LOP set to: " + String(LOP));
+  }
+
+  else {
+    SerialBT.println("Invalid LOP");
+  }
+}
+
+//Set the lower and upper threshold pressures if valid
+//percentages are given against the LOP pressure
+void setThreshold(unsigned int targetPressure, float offsetPercent) {
+  int lowThreshold = (targetPressure * offsetPercent) - 5;
+  int uppThreshold = (targetPressure * offsetPercent) + 2;
+  Serial.println("#W19," + String(lowThreshold) + "\n");
+  Serial.println("#W20," + String(uppThreshold) + "\n");
+  //Serial.println("#W22,200\n"); //Turn the pump low when the upper threshold is reached
+  SerialBT.println("Threshold set to range: " + String(lowThreshold) + " " + String(uppThreshold));
+}
+
+void updatePres() {
+  while (SerialBT.available()) {
+    delay(1);
+    char c = SerialBT.read();
+    str += c;
+  }
+
+  if (str.length() > 0) {
+
+    str.trim();
+    str.toLowerCase();
+    //Serial.println(str);
+
+    if (str.substring(0, 3) == "set") {
+      //expecting pressure data in the form of set=90
+      int x = str.substring(4).toInt();
+      setPres(x);
+    }
+  }
+  str = "";
+}
+
+int startTime = 0;
+int timeElapsed = 0;
+String errorMessage = "";
+
+void resetTime() {
+  startTime = millis() / 1000;
+  timeElapsed = 0;
+}
+
+int plethHolder[6] = {0};
+int holderPosition = 0;
+
+boolean lopCheckAt(int pressure) {
+
+  Serial.println("Entry to: " + String(pressure));
+  //inflate to given pressure******************************
+  setThreshold(pressure, 1);
+  resetTime();
+  while (currentPressure < pressure) {
+    if (timeElapsed >= 10) {
+      Serial.println("Inflation timeout!");
+      errorMessage = "Inflation timeout!";
+      return false;
+    }
+    updatePres();
+    timeElapsed = millis() / 1000 - startTime;
+  }
+  resetTime();
+  //wait for 10 secs while observing pleth data
+  //delay(5000);
+  while (timeElapsed < 10) {
+    plethHolder[holderPosition] = plethAvg;
+    //Serial.println("Inside " + String (pressure) + ": " + String(plethHolder[holderPosition]));
+    holderPosition++;
+    timeElapsed = millis() / 1000 - startTime;
+    if (!connected) {
+      Serial.println("Disconnected!");
+      errorMessage = "Disconnected!";
+      return false;
+    }
+
+    int tempTime = millis();
+    int tempTimeElapsed = 0;
+
+    while (tempTimeElapsed < 2000) {
+      updatePres();
+      delay(10);
+      tempTimeElapsed = millis() - tempTime;
+    }
+  }
+
+  //do something with the plethHolder
+  for (int i = 0; i <= holderPosition; i++) {
+    Serial.print(plethHolder[i]);
+    Serial.print(" ");
+  }
+  Serial.println();
+  Serial.println("Exit from: " + String(pressure));
+  return true;
+}
+
+void lopSequence() {
+
+  SerialBT.println("Starting LOP sequence...");
+  Serial.println("#W22,200\n"); //Turn the pump low to 200 when the upper threshold is reached
+  if (lopCheckAt(60)) {
+    if (lopCheckAt(90)) {
+      if (lopCheckAt(110)) {
+        if (lopCheckAt(130)) {
+          if (lopCheckAt(120)) {
+            Serial.println("Success!");
+            lopAckFlag = true;
+            Serial.println("Exit calibrate");
+          }
+        }
+      }
+    }
+  }
+
 }
